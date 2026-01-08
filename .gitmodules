@@ -1,0 +1,6 @@
+[submodule "node-backend-whatsapp.bak"]
+	path = node-backend-whatsapp.bak
+	url = https://github.com/easydo-tasks/node-backend-whatsapp.git
+[submodule "react-whatsapp-web.bak"]
+	path = react-whatsapp-web.bak
+	url = https://github.com/easydo-tasks/react-whatsapp-web.git

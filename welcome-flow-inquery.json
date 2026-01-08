@@ -1,0 +1,214 @@
+{
+  "version": "7.3",
+  "data_api_version": "3.0",
+  "routing_model": {
+    "COMPANY_DETAILS": ["DEPARTMENT_SELECTION"],
+    "DEPARTMENT_SELECTION": ["HELP_OPTIONS"],
+    "HELP_OPTIONS": []
+  },
+  "screens": [
+    {
+      "id": "COMPANY_DETAILS",
+      "title": "Company Information",
+      "terminal": false,
+      "data": {},
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "company_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Welcome to EasyDo!"
+              },
+              {
+                "type": "TextBody",
+                "text": "Let's get started with your company details"
+              },
+              {
+                "type": "TextInput",
+                "name": "company_name",
+                "label": "Company Name",
+                "input-type": "text",
+                "required": true,
+                "helper-text": "Enter your company name"
+              },
+              {
+                "type": "TextInput",
+                "name": "email",
+                "label": "Email Address",
+                "input-type": "email",
+                "required": true,
+                "helper-text": "We'll send information to this email"
+              },
+              {
+                "type": "RadioButtonsGroup",
+                "name": "employee_count",
+                "label": "Number of Employees",
+                "required": true,
+                "data-source": [
+                  { "id": "1-10", "title": "1 - 10 employees" },
+                  { "id": "10-30", "title": "10 - 30 employees" },
+                  { "id": "30-50", "title": "30 - 50 employees" },
+                  { "id": "50-100", "title": "50 - 100 employees" },
+                  { "id": "100-500", "title": "100 - 500 employees" },
+                  { "id": "1000+", "title": "1000+ employees" }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Next",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "DEPARTMENT_SELECTION"
+                  },
+                  "payload": {
+                    "company_name": "${form.company_form.company_name}",
+                    "email": "${form.company_form.email}",
+                    "employee_count": "${form.company_form.employee_count}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "DEPARTMENT_SELECTION",
+      "title": "Enquiry Details",
+      "terminal": false,
+      "data": {
+        "company_name": {
+          "type": "string",
+          "__example__": "Acme Corp"
+        },
+        "email": {
+          "type": "string",
+          "__example__": "contact@acme.com"
+        },
+        "employee_count": {
+          "type": "string",
+          "__example__": "10-30"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "department_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Which departments do you wish to automate?"
+              },
+              {
+                "type": "CheckboxGroup",
+                "name": "departments",
+                "label": "Select one or more",
+                "required": true,
+                "data-source": [
+                  { "id": "hr", "title": "HR Attendance + Payroll" },
+                  { "id": "task", "title": "Task delegation + Productivity" },
+                  { "id": "ai", "title": "Business Chat + AI" },
+                  { "id": "sales", "title": "Sales lead funnel" },
+                  { "id": "integration", "title": "Integration" },
+                  { "id": "autopilot", "title": "Office on Auto Pilot" }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Next",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "HELP_OPTIONS"
+                  },
+                  "payload": {
+                    "company_name": "${data.company_name}",
+                    "email": "${data.email}",
+                    "employee_count": "${data.employee_count}",
+                    "departments": "${form.department_form.departments}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "HELP_OPTIONS",
+      "title": "How Can We Help?",
+      "terminal": true,
+      "data": {
+        "company_name": {
+          "type": "string",
+          "__example__": "Acme Corp"
+        },
+        "email": {
+          "type": "string",
+          "__example__": "contact@acme.com"
+        },
+        "employee_count": {
+          "type": "string",
+          "__example__": "10-30"
+        },
+        "departments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "__example__": ["hr", "task"]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "help_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "What would you like to receive?"
+              },
+              {
+                "type": "CheckboxGroup",
+                "name": "help_options",
+                "label": "Select all that apply",
+                "required": true,
+                "data-source": [
+                  { "id": "demo", "title": "Demo Video" },
+                  { "id": "subscription", "title": "Subscription options" },
+                  { "id": "download", "title": "App download link" },
+                  { "id": "callback", "title": "Request call back" }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Submit Inquiry",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "company_name": "${data.company_name}",
+                    "email": "${data.email}",
+                    "employee_count": "${data.employee_count}",
+                    "departments": "${data.departments}",
+                    "help_options": "${form.help_form.help_options}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
