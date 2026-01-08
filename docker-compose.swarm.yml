@@ -4,12 +4,35 @@ services:
   db:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-      POSTGRES_DB: ${DB_NAME:-whatsapp_db}
+      POSTGRES_USER: ${DATABASE_USERNAME:-ubuntu}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-123456}
+      POSTGRES_DB: ${DATABASE_NAME:-whatsappflow}
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+      - ./node-backend-whatsapp.bak/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      - app_network
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
     networks:
       - app_network
     deploy:
@@ -24,6 +47,14 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: >
+      sh -c "if [ -n \"$$REDIS_PASSWORD\" ]; then
+        redis-server --requirepass $$REDIS_PASSWORD;
+      else
+        redis-server;
+      fi"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - redis_data:/data
     networks:
@@ -40,15 +71,8 @@ services:
 
   backend:
     image: ${REGISTRY:-localhost:5000}/whatsapp-backend:${TAG:-latest}
-    environment:
-      NODE_ENV: production
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_NAME: ${DB_NAME:-whatsapp_db}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+    env_file:
+      - ./node-backend-whatsapp.bak/.env
     networks:
       - app_network
     deploy:
@@ -86,4 +110,5 @@ networks:
 volumes:
   db_data:
   redis_data:
+  pgadmin_data:
 
