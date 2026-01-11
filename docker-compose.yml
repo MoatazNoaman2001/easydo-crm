@@ -5,19 +5,40 @@ services:
     image: postgres:15-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-      POSTGRES_DB: ${DB_NAME:-whatsapp_db}
+      POSTGRES_USER: ubuntu
+      POSTGRES_PASSWORD: "123456"
+      POSTGRES_DB: whatsappflow
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+      - ./node-backend-whatsapp.bak/schema.sql:/docker-entrypoint-initdb.d/schema.sql
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ubuntu -d whatsappflow"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    networks:
+      - app_network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app_network
 
   redis:
     image: redis:7-alpine
@@ -31,21 +52,92 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - app_network
 
   backend:
     build:
-      context: ./node-backend-whatsapp
+      context: ./node-backend-whatsapp.bak
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
+      # App
       NODE_ENV: production
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_NAME: ${DB_NAME:-whatsapp_db}
+      PORT: "5000"
+      
+      # Database
+      DATABASE_HOST: db
+      DATABASE_PORT: "5432"
+      DATABASE_USERNAME: ubuntu
+      DATABASE_PASSWORD: "123456"
+      DATABASE_NAME: whatsappflow
+      DATABASE_URL: postgresql://ubuntu:123456@db:5432/whatsappflow
+      
+      # Redis
       REDIS_HOST: redis
-      REDIS_PORT: 6379
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ""
+      
+      # WhatsApp Configuration (use placeholder values - override in production)
+      WHATASPP_MESSAGE_AUTH_TOKEN: ${WHATASPP_MESSAGE_AUTH_TOKEN:-placeholder_token}
+      WHATASPP_MESSAGE_ENDPOINT: ${WHATASPP_MESSAGE_ENDPOINT:-https://graph.facebook.com/v20.0/placeholder/messages}
+      WHATSAPP_BUSINESS_ID: ${WHATSAPP_BUSINESS_ID:-placeholder}
+      WHATSAPP_APP_ID: ${WHATSAPP_APP_ID:-placeholder}
+      WHATSAPP_BUSINESS_ACCOUNT_ID: ${WHATSAPP_BUSINESS_ACCOUNT_ID:-placeholder}
+      WHATASPP_WELCOME_MSG_TEMPLATE: ${WHATASPP_WELCOME_MSG_TEMPLATE:-welcome}
+      WHATASPP_REMINDER_MSG_TEMPLATE: ${WHATASPP_REMINDER_MSG_TEMPLATE:-subscription_reminder}
+      WHATASPP_REPORT_MSG_TEMPLATE: ${WHATASPP_REPORT_MSG_TEMPLATE:-monthly_report}
+      WHATASPP_PROMOTION_MSG_TEMPLATE: ${WHATASPP_PROMOTION_MSG_TEMPLATE:-hello}
+      WHATASPP_INVOICE_MSG_TEMPLATE: ${WHATASPP_INVOICE_MSG_TEMPLATE:-subscription_invoice}
+      WHATASPP_SUPPORT_TICKET_TEMPLATE: ${WHATASPP_SUPPORT_TICKET_TEMPLATE:-support_ticket_created}
+      WHATASPP_SUPPORT_TICKET_CLOSED_TEMPLATE: ${WHATASPP_SUPPORT_TICKET_CLOSED_TEMPLATE:-support_ticket_closed}
+      WHATASPP_WEBHOOK_VERIFY_TOKEN: ${WHATASPP_WEBHOOK_VERIFY_TOKEN:-jdbejrfbdvewklrjbfdnlck}
+      WHATASPP_AUTH_OTP_TEMPLATE: ${WHATASPP_AUTH_OTP_TEMPLATE:-auth_otp_copy}
+      WHATASPP_WAIT_LIST_TEMPLATE: ${WHATASPP_WAIT_LIST_TEMPLATE:-wait_list_join}
+      WHATASPP_EMPLOYEE_INVITATION_TEMPLATE: ${WHATASPP_EMPLOYEE_INVITATION_TEMPLATE:-employee_invitation}
+      
+      # Chat Configuration
+      START_BASE_HOUR_CHAT: "10"
+      END_BASE_HOUR_CHAT: "22"
+      CHAT_INTERVAL_TIME: "30"
+      MESSAGE_IDLE_TIMEOUT: "10000"
+      CONVERSATION_MESSAGE_IDLE_TIMEOUT: "120000"
+      OPERATIONAL_MESSAGE_COUNT: "2"
+      CONVERSATION_TIMEOUT_MINUTES: "2"
+      CONVERSATION_AUTO_CLOSE_CHECK_INTERVAL: "30000"
+      
+      # Authentication Secrets
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET:-naimtknewrlfjdbejrfhhghghgfhfhfbdvewklrjbfdnlckjakwsdbfciewgjhgdfbukweryjghdfbukweyrgh}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET:-naimtknewrlfjdbejrfbdvewklrjbfhgjhjhgjgjdnlc33333kjakwsdbfciewgjhgdfbukweryjghdfbukweyrgh}
+      RESET_PASSWORD_SECRET: ${RESET_PASSWORD_SECRET:-naimtknewrlfjdbejrfbdvewk3333333333lrjbhhhhfdnlckjakwsdbfciewgjhgdfbukweryjghdfbukweyrgh}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-a1b2c3d4e5f678901234567890123456890abcdef1234567890abcdef123456}
+      
+      # EasyDo Integration
+      EASY_DO_ENDPOINT: ${EASY_DO_ENDPOINT:-https://api-staging.easydoochat.com/api/v2}
+      EASY_DO_TOKEN: ${EASY_DO_TOKEN:-placeholder_token}
+      
+      # Google Configuration
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-placeholder}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-placeholder}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-https://developers.google.com/oauthplayground}
+      GOOGLE_REFRESH_TOKEN: ${GOOGLE_REFRESH_TOKEN:-placeholder}
+      GOOGLE_APP_PASSWORD: ${GOOGLE_APP_PASSWORD:-placeholder}
+      
+      # Frontend
+      FRONTENT_BASE_URL: ${FRONTENT_BASE_URL:-http://localhost:3000}
+      FRONTENT_RESET_PASSWRD_ROUTE: reset
+      
+      # Gemini AI
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-placeholder}
+      
+      # Template API
+      TEMPLATE_REQUEST_API_KEY: ${TEMPLATE_REQUEST_API_KEY:-placeholder}
+      
+      # WhatsApp Private Keys (placeholder - override with real keys in production)
+      NEW_USER_WHATSAPP_PRIVATE_KEY: ${NEW_USER_WHATSAPP_PRIVATE_KEY:-"-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC2nhXGYWV9Qhqp\nvXpXCJX2ssj/Zgi84Smqxoa/bMzTa8v2e9xrWsp49BmtAmxSx1UOqWM2jKQFqko2\nTEyea4uE4XMZZ961jhy/7UlQOosuRTH+KD0Eem8JE9aDqcWwK1jiBARCwwMQP6hJ\n4WQe1JrS1SZlAUB0BKncblyXakfwJUWNLQa8cLnRGgvKoWSFeOPOeqQ1B6ar5rlD\noKaF2jgxOgvPISFBuHANkjWWtDjloTnYnKn+QPjaxTeoLBvD9Nl0IZ5KqROsb3rE\n8VvgVmol3YCDf5B/69VWd7bBh2WQ1wvI2pQUj+9HmVcsnhusqxmr8ZJKLpO8B2uq\ngMjQ6JhhAgMBAAECggEAO95w2hRFLv70edBuIslkTLgJUD21wKJ6xAuI0ooLTobJ\nG9o4hZOCzIuOPVuNgsfpuUBMD+6kuVy+LrXt6oPsfhhhYSNd7pyUDVHwFpbS2U0D\nGkU719OBwnKYAZsvfdWAMrzJXs/LGdEczXfQmJDv3w3VJAj4hfCfdW5S+ar0waQQ\nqIkFUqDKiThr+vEnIDOauAfn9ncuElv4nCnSEuctXXxyzj0c3ZiC7rVCphcTUugY\nMzPFBSfWGcMrD91pt9CdnoJBDRz86Ygk8AKUU0q7B08POky0aXdNvSmKyWqcLQRP\ngY+hFtCDA3ldEifnXHAwno0mwMBqb3WTVnmO6OZkjwKBgQDef22YRRClEr0UkPS5\ncK93twtbIMONE0jjfmT5AYuqC8kyMvyxUi0DBVkcW4xo/2lzLK4JC400EJpR99TW\nj+Zm73cgnb6pb9ORliUI+fpNFVpe8rgUmCnRolwXwLRam1ZaqqC3DgXSczS3Yrby\nKd9U0Bq+ZGSGP2vLOY6z56rfEwKBgQDSHWbnl7GEp7yuve98o2IH2VOC+1B0la3R\nw/DwJJWpLfHEWfACjCasFvcvuPISCiwiQj8QdigDtKz2reL/JvtQB1t4R49m4GFU\nwXKqUmL5Bu53kd1DGrpMC8NnKHX9zaWrelPUkpBDR5IsuyudGzZTAgeOdsr/aSBy\nHvi5xg71OwKBgDv5LOlubZqDabZjst9BgNS7GouUNj3IZ4crOIOg6vVooF4y9fi+\nUqBVy5Ah3GkPwFAgjwaDIO/NkrGABwZu3PrDs8m8dU8uxhonjlVdJ89RQHe9dLJb\nGBfCUm++OrfblWbv0u7IS/kPrJY7LnzyMso91TfxN0mK5+wPrUy639Nt\n-----END PRIVATE KEY-----"}
+      WHATSAPP_FLOW_PRIVATE_KEY: ${WHATSAPP_FLOW_PRIVATE_KEY:-"-----BEGIN RSA PRIVATE KEY-----\nplaceholder\n-----END RSA PRIVATE KEY-----"}
+      WHATSAPP_FLOW_PRIVATE_KEY_PASSWORD: ${WHATSAPP_FLOW_PRIVATE_KEY_PASSWORD:-placeholder}
+      
     ports:
       - "5000:5000"
     depends_on:
@@ -53,18 +145,26 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - app_network
 
   frontend:
     build:
-      context: ./react-whatsapp-web
+      context: ./react-whatsapp-web.bak
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "3000:80"
     depends_on:
       - backend
+    networks:
+      - app_network
+
+networks:
+  app_network:
+    driver: bridge
 
 volumes:
   db_data:
   redis_data:
-
+  pgadmin_data:
