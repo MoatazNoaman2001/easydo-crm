@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict bcVgIw5UElfqNtgPVrCb5us8GzecPxEInO8d7RgfFdNh7SocIK3MhlanABoUNg2
+\restrict roJJeJFhHHepU4NVvNEpVxLYxdTlRtEvIqIzvke11Dsufnouyet8HYZbl5c0h3g
 
 -- Dumped from database version 16.11 (Ubuntu 16.11-0ubuntu0.24.04.1)
 -- Dumped by pg_dump version 16.11 (Ubuntu 16.11-0ubuntu0.24.04.1)
@@ -147,6 +147,25 @@ CREATE TYPE public.file_category AS ENUM (
 
 
 ALTER TYPE public.file_category OWNER TO ubuntu;
+
+--
+-- Name: group_type; Type: TYPE; Schema: public; Owner: ubuntu
+--
+
+CREATE TYPE public.group_type AS ENUM (
+    'static',
+    'dynamic'
+);
+
+
+ALTER TYPE public.group_type OWNER TO ubuntu;
+
+--
+-- Name: TYPE group_type; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON TYPE public.group_type IS 'Type of customer group: static (manual membership) or dynamic (filter-based)';
+
 
 --
 -- Name: lead_status; Type: TYPE; Schema: public; Owner: ubuntu
@@ -365,6 +384,82 @@ $_$;
 
 
 ALTER FUNCTION public.fn_mid(character varying, integer, integer) OWNER TO ubuntu;
+
+--
+-- Name: get_customer_groups(text); Type: FUNCTION; Schema: public; Owner: ubuntu
+--
+
+CREATE FUNCTION public.get_customer_groups(customer_mobile text) RETURNS TABLE(group_id uuid, group_name text, group_type public.group_type, added_at timestamp without time zone)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        cg.id,
+        cg.gname,
+        cg.group_type,
+        gm.added_at
+    FROM group_members gm
+    JOIN customers_groups cg ON gm.group_id = cg.id
+    WHERE gm.mobile_number = customer_mobile 
+      AND gm.removed_at IS NULL
+      AND cg.deleted_at IS NULL
+    ORDER BY gm.added_at DESC;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_customer_groups(customer_mobile text) OWNER TO ubuntu;
+
+--
+-- Name: FUNCTION get_customer_groups(customer_mobile text); Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON FUNCTION public.get_customer_groups(customer_mobile text) IS 'Returns all groups a customer belongs to';
+
+
+--
+-- Name: get_group_member_count(uuid); Type: FUNCTION; Schema: public; Owner: ubuntu
+--
+
+CREATE FUNCTION public.get_group_member_count(group_uuid uuid) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    g_type public.group_type;
+    member_count bigint;
+    filter_json jsonb;
+BEGIN
+    SELECT group_type, filter_config INTO g_type, filter_json
+    FROM customers_groups
+    WHERE id = group_uuid AND deleted_at IS NULL;
+    
+    IF g_type IS NULL THEN
+        RETURN 0;
+    END IF;
+    
+    IF g_type = 'static' THEN
+        SELECT COUNT(*) INTO member_count
+        FROM group_members
+        WHERE group_id = group_uuid AND removed_at IS NULL;
+    ELSE
+        -- Dynamic groups count will be implemented after filter system
+        member_count := -1;
+    END IF;
+    
+    RETURN member_count;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_group_member_count(group_uuid uuid) OWNER TO ubuntu;
+
+--
+-- Name: FUNCTION get_group_member_count(group_uuid uuid); Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON FUNCTION public.get_group_member_count(group_uuid uuid) IS 'Returns member count for a group. Returns -1 for dynamic groups (requires filter evaluation)';
+
 
 --
 -- Name: get_user_recent_gemini_uploads(uuid, integer, integer); Type: FUNCTION; Schema: public; Owner: ubuntu
@@ -820,6 +915,22 @@ $$;
 ALTER FUNCTION public.update_customer_last_interaction() OWNER TO ubuntu;
 
 --
+-- Name: update_customers_groups_updated_at(); Type: FUNCTION; Schema: public; Owner: ubuntu
+--
+
+CREATE FUNCTION public.update_customers_groups_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.update_customers_groups_updated_at() OWNER TO ubuntu;
+
+--
 -- Name: update_gemini_settings_timestamp(); Type: FUNCTION; Schema: public; Owner: ubuntu
 --
 
@@ -952,48 +1063,6 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
--- Name: bulk_messages; Type: TABLE; Schema: public; Owner: ubuntu
---
-
-CREATE TABLE public.bulk_messages (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    group_id uuid,
-    tamplet_name character varying(225) NOT NULL,
-    status character varying(20) DEFAULT 'pending'::character varying,
-    total_recipients integer NOT NULL,
-    sent_count integer DEFAULT 0,
-    failed_count integer DEFAULT 0,
-    created_by uuid,
-    created_at timestamp without time zone DEFAULT now(),
-    completed_at timestamp without time zone
-);
-
-
-ALTER TABLE public.bulk_messages OWNER TO ubuntu;
-
---
--- Name: call; Type: TABLE; Schema: public; Owner: ubuntu
---
-
-CREATE TABLE public.call (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    status public.conversation_status DEFAULT 'open'::public.conversation_status NOT NULL,
-    customer_support uuid,
-    mobile_number character varying NOT NULL,
-    user_name character varying,
-    "timestamp" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    closed_timestamp timestamp without time zone,
-    rating integer DEFAULT 5,
-    reason character varying,
-    query character varying,
-    timeslot character varying,
-    query_bucket character varying
-);
-
-
-ALTER TABLE public.call OWNER TO ubuntu;
-
---
 -- Name: customers; Type: TABLE; Schema: public; Owner: ubuntu
 --
 
@@ -1072,6 +1141,226 @@ COMMENT ON COLUMN public.customers.consent_given IS 'Whether the user has given 
 
 COMMENT ON COLUMN public.customers.failed_message_count IS 'Number of consecutive failed message deliveries';
 
+
+--
+-- Name: customers_groups; Type: TABLE; Schema: public; Owner: ubuntu
+--
+
+CREATE TABLE public.customers_groups (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    gname character varying NOT NULL,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    closed_at timestamp without time zone,
+    deleted_at timestamp without time zone,
+    group_type public.group_type DEFAULT 'static'::public.group_type NOT NULL,
+    filter_config jsonb,
+    description text,
+    created_by uuid,
+    CONSTRAINT check_dynamic_has_filter CHECK (((group_type = 'static'::public.group_type) OR ((group_type = 'dynamic'::public.group_type) AND (filter_config IS NOT NULL))))
+);
+
+
+ALTER TABLE public.customers_groups OWNER TO ubuntu;
+
+--
+-- Name: COLUMN customers_groups.group_type; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON COLUMN public.customers_groups.group_type IS 'Type of group: static (manual membership) or dynamic (filter-based)';
+
+
+--
+-- Name: COLUMN customers_groups.filter_config; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON COLUMN public.customers_groups.filter_config IS 'JSONB filter configuration for dynamic groups. NULL for static groups.';
+
+
+--
+-- Name: COLUMN customers_groups.description; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON COLUMN public.customers_groups.description IS 'Optional description of the group purpose';
+
+
+--
+-- Name: COLUMN customers_groups.created_by; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON COLUMN public.customers_groups.created_by IS 'User who created this group';
+
+
+--
+-- Name: group_members; Type: TABLE; Schema: public; Owner: ubuntu
+--
+
+CREATE TABLE public.group_members (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    group_id uuid NOT NULL,
+    mobile_number character varying NOT NULL,
+    added_by uuid,
+    added_at timestamp without time zone DEFAULT now() NOT NULL,
+    removed_at timestamp without time zone,
+    notes text
+);
+
+
+ALTER TABLE public.group_members OWNER TO ubuntu;
+
+--
+-- Name: TABLE group_members; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON TABLE public.group_members IS 'Junction table managing static group membership (many-to-many: customers can belong to multiple groups)';
+
+
+--
+-- Name: COLUMN group_members.group_id; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON COLUMN public.group_members.group_id IS 'Reference to the customer group';
+
+
+--
+-- Name: COLUMN group_members.mobile_number; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON COLUMN public.group_members.mobile_number IS 'Customer mobile number (can be in multiple groups)';
+
+
+--
+-- Name: COLUMN group_members.added_by; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON COLUMN public.group_members.added_by IS 'User who added this member to the group';
+
+
+--
+-- Name: COLUMN group_members.added_at; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON COLUMN public.group_members.added_at IS 'When the member was added to the group';
+
+
+--
+-- Name: COLUMN group_members.removed_at; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON COLUMN public.group_members.removed_at IS 'Soft delete: timestamp when member was removed from group';
+
+
+--
+-- Name: COLUMN group_members.notes; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON COLUMN public.group_members.notes IS 'Optional notes about why this member was added/removed';
+
+
+--
+-- Name: users; Type: TABLE; Schema: public; Owner: ubuntu
+--
+
+CREATE TABLE public.users (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name character varying NOT NULL,
+    role public.user_role NOT NULL,
+    is_active boolean DEFAULT true,
+    password character varying NOT NULL,
+    email character varying NOT NULL,
+    mobile_number character varying NOT NULL,
+    profile_image character varying,
+    query_buckets text[] DEFAULT '{}'::text[],
+    is_online boolean DEFAULT false NOT NULL,
+    company_id uuid,
+    can_manage_bot_settings boolean DEFAULT false
+);
+
+
+ALTER TABLE public.users OWNER TO ubuntu;
+
+--
+-- Name: active_group_memberships; Type: VIEW; Schema: public; Owner: ubuntu
+--
+
+CREATE VIEW public.active_group_memberships AS
+ SELECT gm.id,
+    gm.group_id,
+    cg.gname AS group_name,
+    cg.group_type,
+    gm.mobile_number,
+    COALESCE(( SELECT username.username
+           FROM unnest(c.usernames) username(username)
+          WHERE ((username.username IS NOT NULL) AND (length(TRIM(BOTH FROM username.username)) > 2) AND (username.username !~ '^[0-9+\s]+$'::text) AND (username.username !~ '^~'::text) AND (username.username !~~* '%test%'::text))
+          ORDER BY
+                CASE
+                    WHEN (username.username ~ '^[A-Za-z\s]+$'::text) THEN 1
+                    WHEN (username.username ~ '^[A-Za-z]'::text) THEN 2
+                    ELSE 3
+                END, (length(username.username)) DESC
+         LIMIT 1), (c.user_name)::text, c.usernames[1], (c.mobile_number)::text) AS customer_name,
+    c.lead_status,
+    c.consent_given,
+    gm.added_at,
+    gm.added_by,
+    u.name AS added_by_name
+   FROM (((public.group_members gm
+     JOIN public.customers_groups cg ON ((gm.group_id = cg.id)))
+     JOIN public.customers c ON (((gm.mobile_number)::text = (c.mobile_number)::text)))
+     LEFT JOIN public.users u ON ((gm.added_by = u.id)))
+  WHERE ((gm.removed_at IS NULL) AND (cg.deleted_at IS NULL) AND (cg.group_type = 'static'::public.group_type));
+
+
+ALTER VIEW public.active_group_memberships OWNER TO ubuntu;
+
+--
+-- Name: VIEW active_group_memberships; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON VIEW public.active_group_memberships IS 'Shows all active static group memberships with customer details';
+
+
+--
+-- Name: bulk_messages; Type: TABLE; Schema: public; Owner: ubuntu
+--
+
+CREATE TABLE public.bulk_messages (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    group_id uuid,
+    tamplet_name character varying(225) NOT NULL,
+    status character varying(20) DEFAULT 'pending'::character varying,
+    total_recipients integer NOT NULL,
+    sent_count integer DEFAULT 0,
+    failed_count integer DEFAULT 0,
+    created_by uuid,
+    created_at timestamp without time zone DEFAULT now(),
+    completed_at timestamp without time zone
+);
+
+
+ALTER TABLE public.bulk_messages OWNER TO ubuntu;
+
+--
+-- Name: call; Type: TABLE; Schema: public; Owner: ubuntu
+--
+
+CREATE TABLE public.call (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    status public.conversation_status DEFAULT 'open'::public.conversation_status NOT NULL,
+    customer_support uuid,
+    mobile_number character varying NOT NULL,
+    user_name character varying,
+    "timestamp" timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    closed_timestamp timestamp without time zone,
+    rating integer DEFAULT 5,
+    reason character varying,
+    query character varying,
+    timeslot character varying,
+    query_bucket character varying
+);
+
+
+ALTER TABLE public.call OWNER TO ubuntu;
 
 --
 -- Name: campaign_eligible_customers; Type: VIEW; Schema: public; Owner: ubuntu
@@ -1440,20 +1729,48 @@ CREATE TABLE public.conversations (
 ALTER TABLE public.conversations OWNER TO ubuntu;
 
 --
--- Name: customers_groups; Type: TABLE; Schema: public; Owner: ubuntu
+-- Name: customers_with_groups; Type: VIEW; Schema: public; Owner: ubuntu
 --
 
-CREATE TABLE public.customers_groups (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    gname character varying NOT NULL,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    closed_at timestamp without time zone,
-    deleted_at timestamp without time zone
-);
+CREATE VIEW public.customers_with_groups AS
+ SELECT c.mobile_number,
+    COALESCE(( SELECT username.username
+           FROM unnest(c.usernames) username(username)
+          WHERE ((username.username IS NOT NULL) AND (length(TRIM(BOTH FROM username.username)) > 2) AND (username.username !~ '^[0-9+\s]+$'::text) AND (username.username !~ '^~'::text) AND (username.username !~~* '%test%'::text))
+          ORDER BY
+                CASE
+                    WHEN (username.username ~ '^[A-Za-z\s]+$'::text) THEN 1
+                    WHEN (username.username ~ '^[A-Za-z]'::text) THEN 2
+                    ELSE 3
+                END, (length(username.username)) DESC
+         LIMIT 1), (c.user_name)::text, c.usernames[1], (c.mobile_number)::text) AS customer_name,
+    c.email,
+    c.lead_status,
+    array_agg(jsonb_build_object('group_id', cg.id, 'group_name', cg.gname, 'group_type', cg.group_type, 'added_at', gm.added_at) ORDER BY gm.added_at DESC) FILTER (WHERE (gm.removed_at IS NULL)) AS groups,
+    count(DISTINCT gm.group_id) FILTER (WHERE (gm.removed_at IS NULL)) AS group_count
+   FROM ((public.customers c
+     LEFT JOIN public.group_members gm ON ((((c.mobile_number)::text = (gm.mobile_number)::text) AND (gm.removed_at IS NULL))))
+     LEFT JOIN public.customers_groups cg ON (((gm.group_id = cg.id) AND (cg.deleted_at IS NULL))))
+  GROUP BY c.mobile_number, COALESCE(( SELECT username.username
+           FROM unnest(c.usernames) username(username)
+          WHERE ((username.username IS NOT NULL) AND (length(TRIM(BOTH FROM username.username)) > 2) AND (username.username !~ '^[0-9+\s]+$'::text) AND (username.username !~ '^~'::text) AND (username.username !~~* '%test%'::text))
+          ORDER BY
+                CASE
+                    WHEN (username.username ~ '^[A-Za-z\s]+$'::text) THEN 1
+                    WHEN (username.username ~ '^[A-Za-z]'::text) THEN 2
+                    ELSE 3
+                END, (length(username.username)) DESC
+         LIMIT 1), (c.user_name)::text, c.usernames[1], (c.mobile_number)::text), c.email, c.lead_status;
 
 
-ALTER TABLE public.customers_groups OWNER TO ubuntu;
+ALTER VIEW public.customers_with_groups OWNER TO ubuntu;
+
+--
+-- Name: VIEW customers_with_groups; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON VIEW public.customers_with_groups IS 'Shows each customer with all their group memberships (many-to-many)';
+
 
 --
 -- Name: gemini_config_audit_log; Type: TABLE; Schema: public; Owner: ubuntu
@@ -1588,28 +1905,6 @@ COMMENT ON COLUMN public.gemini_uploads.upload_status IS 'Status: pending, index
 
 
 --
--- Name: users; Type: TABLE; Schema: public; Owner: ubuntu
---
-
-CREATE TABLE public.users (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    name character varying NOT NULL,
-    role public.user_role NOT NULL,
-    is_active boolean DEFAULT true,
-    password character varying NOT NULL,
-    email character varying NOT NULL,
-    mobile_number character varying NOT NULL,
-    profile_image character varying,
-    query_buckets text[] DEFAULT '{}'::text[],
-    is_online boolean DEFAULT false NOT NULL,
-    company_id uuid,
-    can_manage_bot_settings boolean DEFAULT false
-);
-
-
-ALTER TABLE public.users OWNER TO ubuntu;
-
---
 -- Name: gemini_user_statistics; Type: VIEW; Schema: public; Owner: ubuntu
 --
 
@@ -1629,6 +1924,47 @@ CREATE VIEW public.gemini_user_statistics AS
 
 
 ALTER VIEW public.gemini_user_statistics OWNER TO ubuntu;
+
+--
+-- Name: group_statistics; Type: VIEW; Schema: public; Owner: ubuntu
+--
+
+CREATE VIEW public.group_statistics AS
+ SELECT cg.id,
+    cg.gname,
+    cg.group_type,
+    cg.description,
+    cg.created_at,
+    cg.updated_at,
+    u.name AS created_by_name,
+        CASE
+            WHEN (cg.group_type = 'static'::public.group_type) THEN ( SELECT count(*) AS count
+               FROM public.group_members gm
+              WHERE ((gm.group_id = cg.id) AND (gm.removed_at IS NULL)))
+            ELSE NULL::bigint
+        END AS member_count,
+        CASE
+            WHEN (cg.group_type = 'static'::public.group_type) THEN ( SELECT max(gm.added_at) AS max
+               FROM public.group_members gm
+              WHERE ((gm.group_id = cg.id) AND (gm.removed_at IS NULL)))
+            ELSE NULL::timestamp without time zone
+        END AS last_member_added_at,
+    ( SELECT count(*) AS count
+           FROM public.campaigns c
+          WHERE (c.group_id = cg.id)) AS campaign_count
+   FROM (public.customers_groups cg
+     LEFT JOIN public.users u ON ((cg.created_by = u.id)))
+  WHERE (cg.deleted_at IS NULL);
+
+
+ALTER VIEW public.group_statistics OWNER TO ubuntu;
+
+--
+-- Name: VIEW group_statistics; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON VIEW public.group_statistics IS 'Summary statistics for all active groups';
+
 
 --
 -- Name: languages; Type: TABLE; Schema: public; Owner: ubuntu
@@ -2416,6 +2752,14 @@ ALTER TABLE ONLY public.gemini_uploads
 
 
 --
+-- Name: group_members group_members_pkey; Type: CONSTRAINT; Schema: public; Owner: ubuntu
+--
+
+ALTER TABLE ONLY public.group_members
+    ADD CONSTRAINT group_members_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: languages languages_language_key; Type: CONSTRAINT; Schema: public; Owner: ubuntu
 --
 
@@ -2990,6 +3334,27 @@ CREATE INDEX idx_customers_easydo_user_id ON public.customers USING btree (easyd
 
 
 --
+-- Name: idx_customers_groups_dynamic; Type: INDEX; Schema: public; Owner: ubuntu
+--
+
+CREATE INDEX idx_customers_groups_dynamic ON public.customers_groups USING btree (id) WHERE ((group_type = 'dynamic'::public.group_type) AND (deleted_at IS NULL));
+
+
+--
+-- Name: idx_customers_groups_filter_config; Type: INDEX; Schema: public; Owner: ubuntu
+--
+
+CREATE INDEX idx_customers_groups_filter_config ON public.customers_groups USING gin (filter_config) WHERE (group_type = 'dynamic'::public.group_type);
+
+
+--
+-- Name: idx_customers_groups_type; Type: INDEX; Schema: public; Owner: ubuntu
+--
+
+CREATE INDEX idx_customers_groups_type ON public.customers_groups USING btree (group_type) WHERE (deleted_at IS NULL);
+
+
+--
 -- Name: idx_customers_inactive_users; Type: INDEX; Schema: public; Owner: ubuntu
 --
 
@@ -3155,6 +3520,27 @@ CREATE INDEX idx_gemini_uploads_store_id ON public.gemini_uploads USING btree (s
 --
 
 CREATE INDEX idx_gemini_uploads_user_id ON public.gemini_uploads USING btree (user_id);
+
+
+--
+-- Name: idx_group_members_added_at; Type: INDEX; Schema: public; Owner: ubuntu
+--
+
+CREATE INDEX idx_group_members_added_at ON public.group_members USING btree (added_at);
+
+
+--
+-- Name: idx_group_members_group_id; Type: INDEX; Schema: public; Owner: ubuntu
+--
+
+CREATE INDEX idx_group_members_group_id ON public.group_members USING btree (group_id) WHERE (removed_at IS NULL);
+
+
+--
+-- Name: idx_group_members_mobile_number; Type: INDEX; Schema: public; Owner: ubuntu
+--
+
+CREATE INDEX idx_group_members_mobile_number ON public.group_members USING btree (mobile_number) WHERE (removed_at IS NULL);
 
 
 --
@@ -3508,6 +3894,20 @@ CREATE INDEX indx_message_reply_id ON public.messages USING btree (message_reply
 
 
 --
+-- Name: unique_active_group_membership; Type: INDEX; Schema: public; Owner: ubuntu
+--
+
+CREATE UNIQUE INDEX unique_active_group_membership ON public.group_members USING btree (group_id, mobile_number) WHERE (removed_at IS NULL);
+
+
+--
+-- Name: INDEX unique_active_group_membership; Type: COMMENT; Schema: public; Owner: ubuntu
+--
+
+COMMENT ON INDEX public.unique_active_group_membership IS 'Prevents duplicate: same customer cannot be in the same group twice, but CAN be in multiple different groups';
+
+
+--
 -- Name: campaigns campaign_status_change_trigger; Type: TRIGGER; Schema: public; Owner: ubuntu
 --
 
@@ -3561,6 +3961,13 @@ CREATE TRIGGER trigger_update_campaign_statistics AFTER INSERT OR UPDATE ON publ
 --
 
 CREATE TRIGGER trigger_update_customer_interaction AFTER INSERT ON public.lead_interactions FOR EACH ROW WHEN (((new.interaction_type)::text = ANY ((ARRAY['message_received'::character varying, 'button_clicked'::character varying, 'opt_in'::character varying])::text[]))) EXECUTE FUNCTION public.update_customer_last_interaction();
+
+
+--
+-- Name: customers_groups trigger_update_customers_groups_updated_at; Type: TRIGGER; Schema: public; Owner: ubuntu
+--
+
+CREATE TRIGGER trigger_update_customers_groups_updated_at BEFORE UPDATE ON public.customers_groups FOR EACH ROW EXECUTE FUNCTION public.update_customers_groups_updated_at();
 
 
 --
@@ -3797,6 +4204,14 @@ ALTER TABLE ONLY public.customers
 
 
 --
+-- Name: customers_groups customers_groups_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: ubuntu
+--
+
+ALTER TABLE ONLY public.customers_groups
+    ADD CONSTRAINT customers_groups_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id);
+
+
+--
 -- Name: call fk_call_users; Type: FK CONSTRAINT; Schema: public; Owner: ubuntu
 --
 
@@ -3882,6 +4297,30 @@ ALTER TABLE ONLY public.gemini_uploads
 
 ALTER TABLE ONLY public.gemini_uploads
     ADD CONSTRAINT gemini_uploads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: group_members group_members_added_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: ubuntu
+--
+
+ALTER TABLE ONLY public.group_members
+    ADD CONSTRAINT group_members_added_by_fkey FOREIGN KEY (added_by) REFERENCES public.users(id);
+
+
+--
+-- Name: group_members group_members_group_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: ubuntu
+--
+
+ALTER TABLE ONLY public.group_members
+    ADD CONSTRAINT group_members_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.customers_groups(id) ON DELETE CASCADE;
+
+
+--
+-- Name: group_members group_members_mobile_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: ubuntu
+--
+
+ALTER TABLE ONLY public.group_members
+    ADD CONSTRAINT group_members_mobile_number_fkey FOREIGN KEY (mobile_number) REFERENCES public.customers(mobile_number) ON DELETE CASCADE;
 
 
 --
@@ -4024,5 +4463,5 @@ ALTER TABLE ONLY public.webhook_triggers
 -- PostgreSQL database dump complete
 --
 
-\unrestrict bcVgIw5UElfqNtgPVrCb5us8GzecPxEInO8d7RgfFdNh7SocIK3MhlanABoUNg2
+\unrestrict roJJeJFhHHepU4NVvNEpVxLYxdTlRtEvIqIzvke11Dsufnouyet8HYZbl5c0h3g
 
